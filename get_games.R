@@ -1,9 +1,22 @@
+#This script scapes game-related information from ESPN.com.
+#Each page read in contains a season's worth of games.
+#Each game's date, opponent, and outcome is scraped.
+
+#Load packages
 library(tidyverse)
 library(rvest)
 
+#Create data folder
+data_dir <- "data/"
+dir.create(data_dir, showWarnings = FALSE)
+
+#Function that takes in a season and returns a data frame of games
 get_games <- function(year){
+  
+  #Read in page
   games <- read_html(paste0("http://www.espn.com/mens-college-basketball/team/schedule/_/id/150/season/", 
                             year))
+  #Scrape game data
   scores <- games %>% 
     html_nodes(".Table2__td:nth-child(3)") %>% 
     html_text() %>% 
@@ -20,6 +33,7 @@ get_games <- function(year){
   scores <- scores %>% 
     .[which(. != "Postponed")]
   
+  #Construct data frame
   df <- data_frame(
     year = rep(year, length(scores)),
     date = dates,
@@ -39,7 +53,9 @@ get_games <- function(year){
   return(df)
 }
 
+#Scrape seasons 2005-2018
 years <- 2005:2018
 game_history <- map_df(years, function(x){get_games(x)})
 
+#Write data frame to data folder
 write_rds(game_history, path = "data//games.rds")

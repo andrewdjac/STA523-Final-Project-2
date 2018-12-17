@@ -1,10 +1,12 @@
 ---
 title: "STA 523 Final Project"
-author: "Andy Cooper"
+author: "Andy Cooper, Jingyi Zhang, Mingjie Zhao, Ziwei Zhu"
 date: "11/28/2018"
 output: html_document
 runtime: shiny
 ---
+
+The first part of the markdown file creates helper functions to be used in the shiny app.
 
 ```{r message = F, echo = F}
 library(tidyverse)
@@ -15,8 +17,8 @@ library(tools)
 ```
 
 
-```{r echo = F}
-#Load data
+```{r}
+#Load data prepared by parse_data.R
 players_data <- readRDS("players_data.rds")
 ```
 
@@ -31,47 +33,91 @@ get_roster <- function(s){
 }
 ```
 
-```{r echo = F}
-#Function to plot line plot
+```{r}
+#Function to plot season performance for given player, season, and statistic
 plot_season <- function(p, s, c){
   avg_stat <- mean(players_data %>% 
                      filter(name == p, category == c) %>%
                      .$quantity)
   g <- players_data %>% 
+    mutate(win = factor(win, levels = c(0,1), labels = c("loss", "win"))) %>% 
     filter(name == p, season == s, category == c) %>% 
     ggplot(aes(x = date, y = quantity, color = factor(win))) + 
-    geom_point(aes(size = (abs(points_duke - points_other) + 2))) + 
+    geom_point(aes(size = (abs(points_duke - points_other)))) + 
     geom_line(color = "black") + 
     geom_hline(yintercept = avg_stat, col = "#4169e1") +
-    labs(x = "Date", y = c %>% toTitleCase()) +
-    theme(legend.position = "none") +
-    scale_color_manual(values = c("red", "#4169e1"))
+    labs(x = "Date", y = c %>% toTitleCase(), 
+         title = "Click on a point on the plot to see the game summary") +
+    scale_color_manual(values = c("red", "#4169e1")) + 
+    guides(color = guide_legend(title = "Game Outcome"),
+           size = guide_legend(title = "Point Deficit"))
   return(g)
 }
 ```
 
 
-Shiny App
+```{r}
+#Function to create map with player's hometown
+plot_map <- function(s, p){
+  states <- map_data("state")
+  coords <- players_data %>% 
+    filter(season == s, name == p) %>% 
+    select(lat, lon) %>% 
+    mutate(lon = lon*-1)
+  
+  g <- ggplot(data = states) + 
+    geom_polygon(aes(x = long, y = lat, group = group), fill = "grey") + 
+    geom_point(data = coords, color = "blue",
+               mapping = aes(x = lon, y = lat),        
+               alpha = 0.5, show.legend = FALSE) +
+    coord_fixed(1.3) + 
+    theme_void()
+  return(g)
+}
+```
 
-```{r echo = F}
+
+Now the actual shiny app is created. The application has 3 inputs, which are dropdown menus to select the season, the player from that season, and the statistic. The outputs are a player image and summary, a line plot, and a modal dialog box created when points on the plot are clicked.
+
+The application is designed to have three main features. The first feature is player-related information. The app outputs the selected player's jersey number, year, high school, height, weight, and position, along with an image of the player. The app also plots a map with a point showing that player's hometown.
+
+The second feature is player performance information. The selected season, player, and statistic are used to create a ggplot of that player's performance over the course of the season.
+
+The third feature is game-related information. The line plot is interactive; a user can click on a point to get a summary of that game in a modal dialog box. The box contains the exact date of the game, the opponent, and final score. It also includes the names and pictures of the top 3 Duke performers in the chosen statistic for that game.
+
+```{r}
+#Shiny UI
 ui <- fluidPage(
   titlePanel("Duke Men's Basketball Player Analysis App"),
   sidebarLayout(
     sidebarPanel = sidebarPanel(
+      
+      #Input season
       selectInput(inputId = "select_season", label = h4("Select Season"), 
                   choices = players_data$season %>% 
                     unique() %>% sort() %>% rev()),
-      selectInput(inputId = "select_player", label = h4("Select Player"),
+      
+      #Input player
+      selectInput(inputId = "select_player", 
+                  label = h4("Select Player From Season"),
                   choices = players_data$name %>% unique() %>% sort()),
+      
+      #Input statistic
       selectInput(inputId = "select_category", label = h4("Select Statistic"),
                   choices = players_data$category %>% unique() %>%
                     toTitleCase(),
-                  selected = 1)
+                  selected = 1),
+      HTML("<center>"),
+      tags$img(src = "https://upload.wikimedia.org/wikipedia/commons/e/e1/Duke_Athletics_logo.svg",
+               width = "50%"),
+      HTML("</center>")
     ),
+    
     mainPanel = mainPanel(
       fluidRow(
         column(6, uiOutput("player_summary")),
-        column(3, uiOutput("player_image"))
+        column(3, uiOutput("player_image")),
+        column(3, plotOutput("player_hometowns", height = "125px"))
       ),
       fluidRow(
         plotOutput("player_performance", click = "click_game")
@@ -79,10 +125,14 @@ ui <- fluidPage(
     )
   )
 )
+```
 
-#SERVER
+
+```{r}
+#Shiny server
 server <- function(input, output, session){
-  #Reactive Values
+  
+  #Reactive list of player info
   state <- reactiveValues(
     player_info = list()
   )
@@ -95,10 +145,11 @@ server <- function(input, output, session){
       get_roster(input$select_season)[1])
     
     updateSelectizeInput(session = session, inputId = "select_player", 
-                      choices = get_roster(input$select_season),
-                      selected = same_player)
+                         choices = get_roster(input$select_season),
+                         selected = same_player)
   })
   
+  #Update player info based on user input
   observe({
     state$player_info <- players_data %>% 
       filter(name == input$select_player & season == input$select_season) %>% 
@@ -125,8 +176,14 @@ server <- function(input, output, session){
   
   #Output player image
   output$player_image <- renderUI({
-    tags$img(src = state$player_info$picture[1], height = "150px")
+    tags$img(src = state$player_info$picture[1], height = "125px")
   })
+  
+  #Output map of player's hometown
+  output$player_hometowns <- renderPlot({
+    plot_map(input$select_season, input$select_player)
+  })
+  
   
   #Create line graph
   output$player_performance <- renderPlot({
@@ -134,43 +191,87 @@ server <- function(input, output, session){
                 input$select_season, input$select_category %>% tolower())
   })
   
+  
+  #Create game summary in modal dialog box
   observeEvent(input$click_game, {
+    
+    #Get data rows from user's click
     game_data <- nearPoints(players_data, input$click_game, 
                             threshold = 10, maxpoints = 1,
                             addDist = F) %>% 
-      select(date, opponent, win, points_duke, points_other) %>% 
+      select(date, opponent, win, points_duke, points_other, quantity) %>% 
       unique()
-
+    
+    #If a game was clicked on, create modal dialog box
     if(nrow(game_data) > 0){
+      
+      #Get top 3 players in chosen statistic
       top_3 <- players_data %>% 
-        filter(date == game_data$date, category == tolower(input$select_category)) %>% 
+        filter(date == game_data$date, 
+               category == tolower(input$select_category)) %>% 
         arrange(desc(quantity)) %>% 
         select(name, picture, quantity)
+      
+      #Create modal dialog box
       showModal(modalDialog(title = paste0("Duke vs. ", game_data$opponent,
                                            " (", 
                                            game_data$date %>% 
                                              format("%B  %d, %Y"),
                                            ")"),
                             fluidRow(
-                              column(6, HTML("<center>"), tags$h3(paste("Duke:", game_data$points_duke)), HTML("</center>")),
-                              column(6, HTML("<center>"), tags$h3(paste0(game_data$opponent, ": ",
-                                             game_data$points_other)), HTML("<center>"))
+                              column(6, HTML("<center>"),
+                                     tags$h3(paste("Duke:",
+                                                   game_data$points_duke)),
+                                     HTML("</center>")),
+                              column(6, HTML("<center>"),
+                                     tags$h3(paste0(game_data$opponent, ": ",
+                                                    game_data$points_other)),
+                                     HTML("<center>"))
                             ),
-                            fluidRow(HTML("<center>"), tags$h3(paste("Top 3 Players in", input$select_category)), HTML("</center>")),
-                            fluidRow(column(4, HTML("<center>"), tags$img(src = top_3$picture[1], height = "150px"), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$img(src = top_3$picture[2], height = "150px"), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$img(src = top_3$picture[3], height = "150px"), HTML("</center>"))),
-                            fluidRow(column(4, HTML("<center>"), tags$p(top_3$name[1]), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$p(top_3$name[2]), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$p(top_3$name[3]), HTML("</center>"))),
-                            fluidRow(column(4, HTML("<center>"), tags$p(top_3$quantity[1]), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$p(top_3$quantity[2]), HTML("</center>")),
-                                     column(4, HTML("<center>"), tags$p(top_3$quantity[3]), HTML("</center>"))),
+                            fluidRow(
+                              HTML("<center>"), 
+                              tags$h3(paste("Top 3 Players in",
+                                            input$select_category)),
+                              HTML("</center>")
+                            ),
+                            fluidRow(
+                              column(4, 
+                                     HTML("<center>"),
+                                     tags$img(src = top_3$picture[1],
+                                              height = "150px"),
+                                     tags$br(),
+                                     tags$p(top_3$name[1]),
+                                     tags$br(),
+                                     tags$h4(top_3$quantity[1]),
+                                     HTML("</center>")),
+                              column(4, 
+                                     HTML("<center>"),
+                                     tags$img(src = top_3$picture[2],
+                                              height = "150px"),
+                                     tags$br(),
+                                     tags$p(top_3$name[2]),
+                                     tags$br(),
+                                     tags$h4(top_3$quantity[2]),
+                                     HTML("</center>")),
+                              column(4, 
+                                     HTML("<center>"),
+                                     tags$img(src = top_3$picture[3],
+                                              height = "150px"),
+                                     tags$br(),
+                                     tags$p(top_3$name[3]),
+                                     tags$br(),
+                                     tags$h4(top_3$quantity[3]),
+                                     HTML("</center>"))
+                            ),
                             easyClose = T))
     }
   })
   
 }
+```
 
+```{r}
+#Run shiny app
 shinyApp(ui, server)
 ```
+
